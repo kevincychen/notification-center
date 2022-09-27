@@ -44,10 +44,15 @@ public class NotificationTopology {
         // KStream<String, User> validUsers = userBranches.get("Branch-ValidUsers"); //0923 comment
         KStream<String, User> validUsers = userBranches.get("Branch2-ValidUsers"); //0923 add
         // 後面還差 送到 events 和 allowed-user 的 compacted topic 裡
-        // 0926 add 3.1將user寫allowed-user (compacted topic)
+        // 0926 add 3.1將user寫allowed-user (compacted topic) 
         validUsers.to("allowed-user", Produced.with(Serdes.String(), JsonSerdes.UserSerde()));
         // 0926 add 3.2將event寫allowed-user-events
         userKStream.to("allowed-user-events", Produced.with(Serdes.String(), JsonSerdes.UserSerde()));
+        // 0927 create KTable for "allowed-user-events"
+        streamsBuilder.table(
+            "allowed-user-events", 
+                Consumed.with(Serdes.String(), JsonSerdes.UserSerde()), 
+                    Materialized.as("userEventTable"));
     }
 
     private User queryLdap(String adUser) {
