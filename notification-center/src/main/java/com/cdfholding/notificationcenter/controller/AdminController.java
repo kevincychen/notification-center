@@ -2,7 +2,7 @@ package com.cdfholding.notificationcenter.controller;
 
 import org.apache.kafka.streams.KafkaStreams;
 import org.apache.kafka.streams.StoreQueryParameters;
-import org.apache.kafka.streams.state.KeyValueIterator;
+//import org.apache.kafka.streams.state.KeyValueIterator;
 import org.apache.kafka.streams.state.QueryableStoreTypes;
 import org.apache.kafka.streams.state.ReadOnlyKeyValueStore;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -55,13 +55,14 @@ public class AdminController {
         ReadOnlyKeyValueStore<String, AllowedUserAppliedEvent> keyValueStore = 
             kafkaStreams.store(StoreQueryParameters.fromNameAndType(
                 "userEventTable", QueryableStoreTypes.keyValueStore()));
+        System.out.println("request.getAdUser(): " + request.getAdUser());
         AllowedUserAppliedEvent eventValue = keyValueStore.get(request.getAdUser());
         System.out.println("AdminController->apply->eventValue: " + eventValue);
-        KeyValueIterator<String, AllowedUserAppliedEvent> iter = 
-            keyValueStore.all();
-        while(null != iter.next()) {
+        // KeyValueIterator<String, AllowedUserAppliedEvent> iter = 
+        //    keyValueStore.all();
+        /*while(null != iter.next()) {
           
-        }
+        }*/
         return new AllowedUserApplyResponse("cdfh3593", "success", "none");
     }
 }
