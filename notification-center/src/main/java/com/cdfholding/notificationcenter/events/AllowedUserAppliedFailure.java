@@ -6,9 +6,8 @@ import lombok.Data;
 public class AllowedUserAppliedFailure {
 
   String adUser;
-  
+
   String result;
-  
+
   String reason;
-  
 }

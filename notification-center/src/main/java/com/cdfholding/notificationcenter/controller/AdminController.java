@@ -1,75 +1,110 @@
 package com.cdfholding.notificationcenter.controller;
 
+import com.cdfholding.notificationcenter.dto.AllowedUserApplyRequest;
+import com.cdfholding.notificationcenter.dto.AllowedUserApplyResponse;
+import com.cdfholding.notificationcenter.events.AllowedUserAppliedEvent;
+import com.cdfholding.notificationcenter.service.RestTemplateService;
+import java.util.Collection;
+import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.kafka.streams.KafkaStreams;
-import org.apache.kafka.streams.KeyValue;
+import org.apache.kafka.streams.KeyQueryMetadata;
 import org.apache.kafka.streams.StoreQueryParameters;
+import org.apache.kafka.streams.StreamsMetadata;
+import org.apache.kafka.streams.state.HostInfo;
 import org.apache.kafka.streams.state.KeyValueIterator;
 import org.apache.kafka.streams.state.QueryableStoreTypes;
 import org.apache.kafka.streams.state.ReadOnlyKeyValueStore;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.config.StreamsBuilderFactoryBean;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.support.SendResult;
-import org.springframework.util.concurrent.ListenableFuture;
-import org.springframework.util.concurrent.ListenableFutureCallback;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
-import com.cdfholding.notificationcenter.dto.AllowedUserApplyRequest;
-import com.cdfholding.notificationcenter.dto.AllowedUserApplyResponse;
-import com.cdfholding.notificationcenter.events.AllowedUserAppliedEvent;
 
 @RestController
 public class AdminController {
 
-    KafkaTemplate<String, AllowedUserApplyRequest> kafkaTemplate;
+  final HostInfo hostInfo = new HostInfo("127.0.0.1", 8090);
 
-    public AdminController(KafkaTemplate<String, AllowedUserApplyRequest> kafkaTemplate) {
-        this.kafkaTemplate = kafkaTemplate;
+  KafkaTemplate<String, AllowedUserApplyRequest> kafkaTemplate;
+
+  @Autowired
+  StreamsBuilderFactoryBean factoryBean;
+
+  @Autowired
+  RestTemplateService restTemplateService;
+
+  public AdminController(KafkaTemplate<String, AllowedUserApplyRequest> kafkaTemplate) {
+    this.kafkaTemplate = kafkaTemplate;
+  }
+
+
+  @PostMapping(path = "/apply")
+  public AllowedUserApplyResponse apply(@RequestBody AllowedUserApplyRequest request) {
+    request.setType("apply");
+    // send to Kafka
+    kafkaTemplate.send("allowed-user-command", request.getAdUser(), request);
+
+    // Create KafkaStreams
+    KafkaStreams kafkaStreams = factoryBean.getKafkaStreams();
+    StringSerializer stringSerializer = new StringSerializer();
+
+    // stream eventTable find HostInfo
+    KeyQueryMetadata keyMetada = kafkaStreams.queryMetadataForKey("eventTable", request.getAdUser(),
+        stringSerializer);
+
+    AllowedUserAppliedEvent value = new AllowedUserAppliedEvent();
+
+    if (!hostInfo.equals(keyMetada.activeHost())) {
+      System.out.println("HostInfo is different!!");
+
+      // Print all metadata HostInfo
+      Collection<StreamsMetadata> metadata = kafkaStreams.metadataForAllStreamsClients();
+      System.out.println("MetaDataclient:" + metadata.size());
+      for (StreamsMetadata streamsMetadata : metadata) {
+        System.out.println(
+            "Host info -> " + streamsMetadata.hostInfo().host() + " : " + streamsMetadata.hostInfo()
+                .port());
+        System.out.println(streamsMetadata.stateStoreNames());
+      }
+
+      // Remote
+      value = (AllowedUserAppliedEvent) restTemplateService.restTemplate(
+          "checkEvent/" + request.getAdUser(), keyMetada.activeHost().host(),
+          keyMetada.activeHost().port());
+
+    } else {
+
+      ReadOnlyKeyValueStore<String, AllowedUserAppliedEvent> keyValueStore = kafkaStreams.store(
+          StoreQueryParameters.fromNameAndType("eventTable", QueryableStoreTypes.keyValueStore()));
+      
+      value = keyValueStore.get(request.getAdUser());
+
+      System.out.println(value);
+
+      KeyValueIterator<String, AllowedUserAppliedEvent> range = keyValueStore.all();
     }
 
-    @Autowired
-    StreamsBuilderFactoryBean streamBuilderFactoryBeam;
-    
-    @PostMapping(path = "/apply")
-    public AllowedUserApplyResponse apply(@RequestBody AllowedUserApplyRequest request) {
-        request.setType("apply");
-        ListenableFuture<SendResult<String, AllowedUserApplyRequest>> resultFuture = 
-            kafkaTemplate.send("allowed-user-command", request.getAdUser(), request);
-        // 0927 add callback
-        resultFuture.addCallback(new ListenableFutureCallback<SendResult<String, AllowedUserApplyRequest>>() {
+    return new AllowedUserApplyResponse(value.getAdUser(), value.getResult(), value.getReason());
+  }
 
-          @Override
-          public void onFailure(Throwable ex) {
-              System.out.println("Unable to send message=[allowed-user-command] due to : " + ex.getMessage());           
-          }
+  @GetMapping(path = "/checkEvent/{adUser}")
+  public AllowedUserAppliedEvent checkEvent(@PathVariable("adUser") String adUser) {
 
-          @Override
-          public void onSuccess(SendResult<String, AllowedUserApplyRequest> result) {
-              System.out.println("Sent message=[" + result.getRecordMetadata().topic() + "] with offset=[" + 
-                  result.getRecordMetadata().offset() + "]");
-          }
-          
-        });
-        // 0927 get message of NotificationTopology from KTable
-        KafkaStreams kafkaStreams = streamBuilderFactoryBeam.getKafkaStreams();
-        ReadOnlyKeyValueStore<String, AllowedUserAppliedEvent> keyValueStore = 
-            kafkaStreams.store(StoreQueryParameters.fromNameAndType(
-                "userEventTable", QueryableStoreTypes.keyValueStore()));
-        System.out.println("request.getAdUser(): " + request.getAdUser());
-        AllowedUserAppliedEvent eventValue = keyValueStore.get(request.getAdUser());
-        System.out.println("AdminController->apply->eventValue: " + eventValue);
-        KeyValueIterator<String, AllowedUserAppliedEvent> iter = 
-            keyValueStore.all();
-        AllowedUserAppliedEvent appliedEvent = null;
-        KeyValue<String, AllowedUserAppliedEvent> strAppEventKeyValuePair = null;
-        while(null != (strAppEventKeyValuePair = iter.next())) {
-            appliedEvent = strAppEventKeyValuePair.value;
-            return new AllowedUserApplyResponse(
-                appliedEvent.getAdUser(), 
-                appliedEvent.getResult(),
-                appliedEvent.getReason());        
-        }
-        return new AllowedUserApplyResponse("cdfh3593", "success", "none");
-    }
+    KafkaStreams kafkaStreams = factoryBean.getKafkaStreams();
+
+    ReadOnlyKeyValueStore<String, AllowedUserAppliedEvent> keyValueStore = kafkaStreams.store(
+        StoreQueryParameters.fromNameAndType("eventTable", QueryableStoreTypes.keyValueStore()));
+
+    AllowedUserAppliedEvent value = keyValueStore.get(adUser);
+
+    System.out.println(value);
+
+    KeyValueIterator<String, AllowedUserAppliedEvent> range = keyValueStore.all();
+
+    return value;
+  }
+
 }

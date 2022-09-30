@@ -6,9 +6,9 @@ import lombok.Data;
 public class AllowedUserAppliedEvent {
 
   String adUser;
-  
+
   String result;
-  
+
   String reason;
-  
+
 }
