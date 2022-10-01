@@ -101,7 +101,7 @@ public class QueryController {
       }
       if(null == value) {
         value = new AllowedUserAppliedSuccess();
-        value.setReason("The queried user is not existed.");
+        value.setReason("The queried user does not exist.");
       }
       System.out.println(value);
 
