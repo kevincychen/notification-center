@@ -1,10 +1,13 @@
 package com.cdfholding.notificationcenter.kafka;
 
+import com.cdfholding.notificationcenter.domain.SendMail;
 import com.cdfholding.notificationcenter.domain.User;
 import com.cdfholding.notificationcenter.dto.AllowedUserApplyRequest;
+import com.cdfholding.notificationcenter.dto.AllowedUserMailRequest;
 import com.cdfholding.notificationcenter.events.AllowedUserAppliedEvent;
 import com.cdfholding.notificationcenter.serialization.JsonSerdes;
 import com.cdfholding.notificationcenter.service.LdapService;
+import com.cdfholding.notificationcenter.service.MailService;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.streams.KeyValue;
 import org.apache.kafka.streams.StreamsBuilder;
@@ -22,7 +25,42 @@ public class NotificationTopology {
   LdapService ldapService;
 
   @Autowired
+  MailService mailService;
+
+  @Autowired
+  void mailPipeLine(StreamsBuilder streamsBuilder) {
+    System.out.println();
+    System.out.println("========================== It's mailPipeLine ==========================");
+    System.out.println();
+
+    KStream<String, AllowedUserMailRequest> commandStream = streamsBuilder.stream(
+        "channel-command",
+        Consumed.with(Serdes.String(), JsonSerdes.AllowedUserMailRequest()));
+
+    commandStream.print(Printed.toSysOut());
+
+    Map<String, KStream<String, AllowedUserMailRequest>> branches = commandStream.split(
+            Named.as("Branch3-"))
+        .branch((key, value) -> value.getType().equals("mail"), Branched.as("MailRequest"))
+        .defaultBranch(Branched.as("Others"));
+
+    KStream<String, AllowedUserMailRequest> mailRequestKStream = branches.get(
+        "Branch3-MailRequest");
+
+    KStream<String, SendMail> mailKStream = mailRequestKStream.mapValues(
+        allowedUserMailRequest -> sendMail(allowedUserMailRequest));
+
+    mailKStream.to("channel-mail-events",
+        Produced.with(Serdes.String(), JsonSerdes.SendMail()));
+
+    streamsBuilder.table("channel-mail-events",
+        Consumed.with(Serdes.String(), JsonSerdes.SendMail()),
+        Materialized.as("mailEventsTable"));
+  }
+
+  @Autowired
   void pipeline(StreamsBuilder streamsBuilder) {
+    System.out.println("========================== It's pipeLine ==========================");
     KStream<String, AllowedUserApplyRequest> commandStream = streamsBuilder.stream(
         "allowed-user-command",
         Consumed.with(Serdes.String(), JsonSerdes.AllowedUserApplyRequest()));
@@ -56,9 +94,9 @@ public class NotificationTopology {
 
     eventStream.to("allowed-user-events",
         Produced.with(Serdes.String(), JsonSerdes.AllowedUserAppliedEvent()));
-    
+
     streamsBuilder.table("allowed-user",
-        Consumed.with(Serdes.String(), JsonSerdes.AllowedUserAppliedSuccess()),
+        Consumed.with(Serdes.String(), JsonSerdes.User()),
         Materialized.as("userTable"));
 
     streamsBuilder.table("allowed-user-events",
@@ -72,7 +110,7 @@ public class NotificationTopology {
     AllowedUserAppliedEvent appliedEvent = new AllowedUserAppliedEvent();
     appliedEvent.setAdUser(adUser);
 
-    if (null != user) {
+    if (null != user & user.getLdapInfo().getIsValid() == true) {
       appliedEvent.setResult("Success");
       appliedEvent.setReason(null);
     } else {
@@ -89,6 +127,11 @@ public class NotificationTopology {
     user.setAdUser(adUser);
     user.setLdapInfo(ldapService.query(adUser));
     return user;
+  }
+
+  private SendMail sendMail(AllowedUserMailRequest request) {
+    System.out.println("AllowedUserMailRequest = " + request);
+    return mailService.send(request);
   }
 
 
